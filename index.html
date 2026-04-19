@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>악보 분석 및 주법 변환 프로토타입 v2</title>
+    <style>
+        body {
+            font-family: 'Pretendard', -apple-system, sans-serif;
+            background-color: #f4f6f8;
+            color: #333;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            width: 100%;
+            max-width: 500px;
+        }
+        h1 {
+            font-size: 1.5rem;
+            text-align: center;
+            margin-bottom: 20px;
+            color: #2c3e50;
+        }
+        
+        /* 파일 업로드 영역 스타일 */
+        .upload-area {
+            border: 2px dashed #3498db;
+            border-radius: 12px;
+            padding: 30px;
+            text-align: center;
+            margin-bottom: 20px;
+            background-color: #f0f8ff;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .upload-area:hover {
+            background-color: #e1f0fa;
+        }
+        .upload-area input[type="file"] {
+            display: none;
+        }
+        .upload-icon {
+            font-size: 2rem;
+            margin-bottom: 10px;
+        }
+        #imagePreview {
+            max-width: 100%;
+            max-height: 200px;
+            margin-top: 15px;
+            border-radius: 8px;
+            display: none;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        /* 로딩 UI */
+        #loadingArea {
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+            color: #e67e22;
+            font-weight: bold;
+        }
+
+        /* 엔진 영역 (초기엔 숨김) */
+        #engineArea {
+            display: none;
+            border-top: 2px solid #eee;
+            padding-top: 20px;
+            margin-top: 20px;
+        }
+
+        .control-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: 600; font-size: 0.9rem; }
+        select { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 8px; }
+        
+        .visualizer {
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            gap: 5px;
+            margin: 20px 0;
+        }
+        .beat-box {
+            background: #eee; height: 40px; border-radius: 4px;
+            display: flex; justify-content: center; align-items: center;
+            font-size: 0.8rem; font-weight: bold; color: #aaa;
+        }
+        .beat-box.active { background: #3498db; color: white; }
+        .beat-box.playing { background: #e74c3c !important; color: white; }
+        
+        .btn-play {
+            width: 100%; padding: 15px; background: #2ecc71; color: white;
+            border: none; border-radius: 8px; font-size: 1.1rem; font-weight: bold;
+            cursor: pointer;
+        }
+        .btn-play.stop { background: #e74c3c; }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+</head>
+<body>
+
+<div class="container">
+    <h1>🎼 자동 편곡 프로그램</h1>
+    
+    <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click();">
+        <div class="upload-icon">📁</div>
+        <p>클릭하여 악보 이미지(JPG, PNG) 첨부하기</p>
+        <input type="file" id="fileInput" accept="image/*">
+        <img id="imagePreview" alt="악보 미리보기">
+    </div>
+
+    <div id="loadingArea">
+        <p>⚙️ 악보의 코드와 박자를 분석 중입니다...</p>
+    </div>
+
+    <div id="engineArea">
+        <h2 style="font-size: 1.2rem; color: #2ecc71;">✅ 분석 완료!</h2>
+        <p style="font-size: 0.9rem; color: #666; margin-bottom: 20px;">
+            가상의 분석 결과: 4/4박자, C코드 기반 곡으로 인식되었습니다.
+        </p>
+
+        <div class="control-group">
+            <label for="chordSelect">인식된 코드 (테스트용 변경 가능)</label>
+            <select id="chordSelect">
+                <option value="C">C Major</option>
+                <option value="G">G Major</option>
+                <option value="F">F Major</option>
+                <option value="Am">A Minor</option>
+            </select>
+        </div>
+
+        <div class="control-group">
+            <label for="patternSelect">변환할 주법 선택</label>
+            <select id="patternSelect">
+                <option value="calypso">칼립소 (8비트 스트로크)</option>
+                <option value="4beat">4비트 (기본 정박자)</option>
+                <option value="arpeggio">아르페지오 (분산화음)</option>
+            </select>
+        </div>
+
+        <label>리듬 패턴 시각화</label>
+        <div class="visualizer" id="visualizer"></div>
+
+        <button id="playBtn" class="btn-play">▶ 연주 시작</button>
+    </div>
+</div>
+
+<script>
+    /* --- 파일 업로드 및 분석 시뮬레이션 로직 --- */
+    const fileInput = document.getElementById('fileInput');
+    const imagePreview = document.getElementById('imagePreview');
+    const uploadArea = document.getElementById('uploadArea');
+    const loadingArea = document.getElementById('loadingArea');
+    const engineArea = document.getElementById('engineArea');
+
+    fileInput.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (file) {
+            // 1. 이미지 미리보기 띄우기
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                imagePreview.src = event.target.result;
+                imagePreview.style.display = 'block';
+                uploadArea.querySelector('p').innerText = "다른 악보로 변경하기";
+            }
+            reader.readAsDataURL(file);
+
+            // 2. 가상의 분석 로딩 보여주기
+            loadingArea.style.display = 'block';
+            engineArea.style.display = 'none'; // 기존에 열려있었다면 닫기
+
+            // 3. 2초 후 분석 완료 처리 및 엔진 표시
+            setTimeout(() => {
+                loadingArea.style.display = 'none';
+                engineArea.style.display = 'block';
+                renderVisualizer(); // 엔진 UI 초기화
+            }, 2000);
+        }
+    });
+
+    /* --- 연주 엔진 로직 (이전과 동일) --- */
+    const chordNotes = { 'C': ['C4', 'E4', 'G4'], 'G': ['G3', 'B3', 'D4'], 'F': ['F3', 'A3', 'C4'], 'Am': ['A3', 'C4', 'E4'] };
+    const patterns = {
+        'calypso': [1, 0, 1, 1, 0, 1, 1, 1],
+        '4beat':   [1, 0, 1, 0, 1, 0, 1, 0],
+        'arpeggio':[0, 1, 2, 1, 0, 1, 2, 1]
+    };
+
+    let synth, sequence;
+    let isPlaying = false;
+
+    const chordSelect = document.getElementById('chordSelect');
+    const patternSelect = document.getElementById('patternSelect');
+    const visualizer = document.getElementById('visualizer');
+    const playBtn = document.getElementById('playBtn');
+
+    function renderVisualizer() {
+        visualizer.innerHTML = '';
+        const currentPattern = patterns[patternSelect.value];
+        currentPattern.forEach((hit, index) => {
+            const box = document.createElement('div');
+            box.className = 'beat-box';
+            box.id = `beat-${index}`;
+            if(hit !== 0) {
+                box.classList.add('active');
+                box.innerText = patternSelect.value === 'arpeggio' ? `음${hit+1}` : '♪';
+            } else {
+                box.innerText = '-';
+            }
+            visualizer.appendChild(box);
+        });
+    }
+
+    async function togglePlay() {
+        if (!isPlaying) {
+            await Tone.start();
+            if(!synth) synth = new Tone.PolySynth(Tone.Synth).toDestination();
+            Tone.Transport.bpm.value = 90;
+
+            const notes = chordNotes[chordSelect.value];
+            const pattern = patterns[patternSelect.value];
+            let step = 0;
+
+            sequence = new Tone.Loop((time) => {
+                document.querySelectorAll('.beat-box').forEach(b => b.classList.remove('playing'));
+                const currentBox = document.getElementById(`beat-${step}`);
+                if(currentBox && pattern[step] !== 0) currentBox.classList.add('playing');
+
+                if (pattern[step] !== 0) {
+                    if (patternSelect.value === 'arpeggio') {
+                        synth.triggerAttackRelease(notes[pattern[step]], "8n", time);
+                    } else {
+                        synth.triggerAttackRelease(notes, "8n", time);
+                    }
+                }
+                step = (step + 1) % 8;
+            }, "8n");
+
+            sequence.start(0);
+            Tone.Transport.start();
+            isPlaying = true;
+            playBtn.innerText = "■ 정지";
+            playBtn.classList.add("stop");
+        } else {
+            sequence.stop();
+            Tone.Transport.stop();
+            document.querySelectorAll('.beat-box').forEach(b => b.classList.remove('playing'));
+            isPlaying = false;
+            playBtn.innerText = "▶ 연주 시작";
+            playBtn.classList.remove("stop");
+        }
+    }
+
+    chordSelect.addEventListener('change', renderVisualizer);
+    patternSelect.addEventListener('change', renderVisualizer);
+    playBtn.addEventListener('click', togglePlay);
+</script>
+
+</body>
+</html>
